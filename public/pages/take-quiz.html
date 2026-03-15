@@ -129,18 +129,45 @@
     await loadQuiz();
   });
 
-  async function loadQuiz() {
-    try {
-      const snap = await getDoc(doc(db, 'quizzes', quizId));
-      if (!snap.exists()) { toast('Kviz nije pronađen', 'error'); setTimeout(() => window.location.href='/student',1500); return; }
-      quiz = { id: snap.id, ...snap.data() };
-      questions = [...quiz.questions];
-      if (quiz.shuffleQuestions) questions.sort(() => Math.random() - .5);
-      showIntro();
-    } catch(e) {
-      toast('Greška: ' + e.message, 'error');
+ async function loadQuiz() {
+  try {
+    console.log('Loading quiz ID:', quizId);
+    
+    if (!quizId) {
+      toast('Nema ID kviza', 'error');
+      setTimeout(() => window.location.href='/student', 1500);
+      return;
     }
+
+    const snap = await getDoc(doc(db, 'quizzes', quizId));
+    
+    console.log('Quiz exists:', snap.exists());
+    console.log('Quiz data:', snap.data());
+    
+    if (!snap.exists()) {
+      toast('Kviz nije pronađen', 'error');
+      setTimeout(() => window.location.href='/student', 1500);
+      return;
+    }
+
+    const data = snap.data();
+    
+    if (data.status !== 'active') {
+      toast('Ovaj kviz trenutno nije aktivan', 'error');
+      setTimeout(() => window.location.href='/student', 1500);
+      return;
+    }
+
+    quiz = { id: snap.id, ...data };
+    questions = [...quiz.questions];
+    if (quiz.shuffleQuestions) questions.sort(() => Math.random() - .5);
+    showIntro();
+    
+  } catch(e) {
+    console.error('loadQuiz error:', e);
+    toast('Greška: ' + e.code + ' — ' + e.message, 'error');
   }
+}
 
   function showIntro() {
     document.getElementById('phase-loading').style.display = 'none';
