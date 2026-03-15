@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="bs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KvizMajstor — Prijava</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; overflow: hidden; }
+    .orb { position: fixed; border-radius: 50%; filter: blur(80px); opacity: .15; pointer-events: none; }
+    .orb1 { width: 400px; height: 400px; background: var(--accent); top: -120px; left: -120px; }
+    .orb2 { width: 300px; height: 300px; background: var(--purple); bottom: -80px; right: -80px; }
+    .box { background: var(--bg2); border: 1px solid var(--border2); border-radius: 24px; padding: 40px; width: 100%; max-width: 420px; box-shadow: 0 24px 80px rgba(0,0,0,.5); position: relative; z-index: 1; animation: fadeUp .5s ease; }
+    .logo { text-align: center; margin-bottom: 28px; }
+    .logo-icon { font-size: 42px; }
+    .logo h1 { font-family: var(--fd); font-size: 28px; font-weight: 700; margin: 10px 0 4px; }
+    .logo p { font-size: 13px; color: var(--text3); }
+    .tabs-login { display: flex; background: var(--bg3); border-radius: var(--r); padding: 4px; margin-bottom: 24px; gap: 4px; }
+    .tab-login { flex: 1; padding: 8px; border: none; border-radius: 8px; font-family: var(--fb); font-size: 14px; font-weight: 500; cursor: pointer; background: transparent; color: var(--text3); transition: all var(--t); }
+    .tab-login.active { background: var(--bg2); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    .info-box { display: flex; gap: 8px; background: var(--accent-dim); border: 1px solid rgba(108,140,255,.2); border-radius: var(--r); padding: 10px 14px; font-size: 13px; color: var(--text2); margin-bottom: 16px; }
+    #reg-fields { display: none; }
+  </style>
+</head>
+<body>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+
+  <div class="box">
+    <div class="logo">
+      <div class="logo-icon">📚</div>
+      <h1>KvizMajstor</h1>
+      <p>AI platforma za testiranje učenika</p>
+    </div>
+
+    <div class="tabs-login">
+      <button class="tab-login active" onclick="switchMode('login')">Prijava</button>
+      <button class="tab-login" onclick="switchMode('register')">Registracija</button>
+    </div>
+
+    <form id="form">
+      <div id="reg-fields">
+        <div class="fg">
+          <label>Ime i prezime</label>
+          <input class="input" id="name" type="text" placeholder="Npr. Marko Marković" />
+        </div>
+      </div>
+      <div class="fg">
+        <label>Email adresa</label>
+        <input class="input" id="email" type="email" placeholder="vas@email.com" required />
+      </div>
+      <div class="fg">
+        <label>Lozinka</label>
+        <input class="input" id="password" type="password" placeholder="••••••••" required />
+      </div>
+      <div class="info-box" id="reg-info" style="display:none">
+        <span>ℹ️</span><span>Admin prava dodjeljuje nastavnik nakon registracije u Firebase konzoli.</span>
+      </div>
+      <button class="btn btn-primary btn-full btn-lg" type="submit" id="submit-btn">Prijavi se</button>
+    </form>
+  </div>
+
+  <script type="module">
+    import { auth, db } from '/js/firebase-config.js';
+    import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import { doc, setDoc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+    import { toast, btnLoad, btnReset } from '/js/utils.js';
+
+    let mode = 'login';
+
+    window.switchMode = (m) => {
+      mode = m;
+      document.querySelectorAll('.tab-login').forEach((t, i) => t.classList.toggle('active', (i === 0 && m === 'login') || (i === 1 && m === 'register')));
+      document.getElementById('reg-fields').style.display = m === 'register' ? 'block' : 'none';
+      document.getElementById('reg-info').style.display   = m === 'register' ? 'flex'  : 'none';
+      document.getElementById('submit-btn').textContent   = m === 'login' ? 'Prijavi se' : 'Kreiraj račun';
+    };
+
+    document.getElementById('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('submit-btn');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      btnLoad(btn);
+
+      const errMap = {
+        'auth/user-not-found': 'Korisnik nije pronađen',
+        'auth/wrong-password': 'Pogrešna lozinka',
+        'auth/invalid-credential': 'Pogrešni podaci za prijavu',
+        'auth/email-already-in-use': 'Email već postoji',
+        'auth/weak-password': 'Lozinka mora imati min. 6 znakova',
+        'auth/invalid-email': 'Nevažeći email',
+      };
+
+      try {
+        if (mode === 'login') {
+          const cred = await signInWithEmailAndPassword(auth, email, password);
+          const snap = await getDoc(doc(db, 'users', cred.user.uid));
+          const role = snap.data()?.role || 'student';
+          window.location.href = role === 'admin' ? '/admin' : '/student';
+        } else {
+          const name = document.getElementById('name').value.trim();
+          if (!name) { toast('Unesite ime i prezime', 'error'); btnReset(btn); return; }
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          await setDoc(doc(db, 'users', cred.user.uid), { email, displayName: name, role: 'student', createdAt: new Date().toISOString() });
+          toast('Račun kreiran! Preusmjeravanje...', 'success');
+          setTimeout(() => window.location.href = '/student', 1000);
+        }
+      } catch (err) {
+        toast(errMap[err.code] || 'Greška: ' + err.message, 'error');
+        btnReset(btn);
+      }
+    });
+  </script>
+</body>
+</html>

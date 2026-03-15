@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="bs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KvizMajstor — Učenik</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <style>
+    .pg { padding: 32px 0 60px; }
+    .qg { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px,1fr)); gap: 18px; }
+    .qcard { display: flex; flex-direction: column; gap: 12px; cursor: default; transition: transform var(--t), box-shadow var(--t); }
+    .qcard:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+    .qcard-subj { font-size:12px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.05em; }
+    .qcard-title { font-family:var(--fd); font-size:17px; font-weight:600; line-height:1.3; }
+    .qcard-desc  { font-size:13px; color:var(--text2); line-height:1.5; flex:1; }
+    .qcard-meta  { display:flex; gap:14px; font-size:12px; color:var(--text3); }
+    .res-bar     { display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--text2); }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="wrap">
+      <a class="nb-brand" href="/student"><span class="nb-logo">📚</span><span class="nb-title">KvizMajstor</span></a>
+      <div class="nb-right">
+        <span class="badge badge-blue">🎓 Učenik</span>
+        <span class="nb-user" id="nb-email"></span>
+        <button class="btn btn-ghost btn-sm" id="logout-btn">Odjava</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap pg">
+    <div style="margin-bottom:24px">
+      <h1 style="font-family:var(--fd);font-size:28px;font-weight:700;margin-bottom:4px">Zdravo! 👋</h1>
+      <p style="font-size:14px;color:var(--text2)" id="greeting-sub">Odaberite kviz koji želite riješiti</p>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-v" id="s-avail"  style="color:var(--accent)">-</div><div class="stat-l">Dostupnih kvizova</div></div>
+      <div class="stat-card"><div class="stat-v" id="s-done"   style="color:var(--green)">-</div><div class="stat-l">Riješenih kvizova</div></div>
+      <div class="stat-card"><div class="stat-v" id="s-avg"    style="color:var(--amber)">-</div><div class="stat-l">Prosječan rezultat</div></div>
+      <div class="stat-card"><div class="stat-v" id="s-best"   style="color:var(--purple)">-</div><div class="stat-l">Najbolja ocjena</div></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="quizzes">📝 Dostupni kvizovi</button>
+      <button class="tab" data-tab="my-results">📊 Moji rezultati</button>
+    </div>
+
+    <!-- Quizzes tab -->
+    <div id="tab-quizzes">
+      <div class="qg" id="quizzes-grid">
+        <p style="color:var(--text3);font-size:14px">Učitavanje...</p>
+      </div>
+    </div>
+
+    <!-- My results tab -->
+    <div id="tab-my-results" style="display:none">
+      <div class="card">
+        <div class="sec-title">Moji rezultati</div>
+        <div style="overflow-x:auto" id="my-results-wrap">
+          <p style="color:var(--text3);font-size:14px;padding:16px 0">Učitavanje...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { auth, db } from '/js/firebase-config.js';
+    import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import { collection, getDocs, doc, getDoc, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+    import { toast, gradeBadge, fmtDate, pctColor } from '/js/utils.js';
+
+    let myResults = [];
+    let uid = null;
+
+    onAuthStateChanged(auth, async (u) => {
+      if (!u) { window.location.href = '/login'; return; }
+      uid = u.uid;
+      document.getElementById('nb-email').textContent = u.email;
+      const snap = await getDoc(doc(db, 'users', u.uid));
+      const data = snap.data();
+      if (data?.role === 'admin') { window.location.href = '/admin'; return; }
+      document.getElementById('greeting-sub').textContent = `Dobrodošli, ${data?.displayName || u.email.split('@')[0]}!`;
+      await loadData();
+    });
+
+    document.getElementById('logout-btn').onclick = () => signOut(auth).then(() => window.location.href = '/login');
+
+    document.querySelectorAll('.tab').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-quizzes').style.display    = btn.dataset.tab === 'quizzes'    ? 'block' : 'none';
+        document.getElementById('tab-my-results').style.display = btn.dataset.tab === 'my-results' ? 'block' : 'none';
+      };
+    });
+
+    async function loadData() {
+      const [qSnap, rSnap] = await Promise.all([
+        getDocs(query(collection(db, 'quizzes'), where('status', '==', 'active'), orderBy('createdAt', 'desc'))),
+        getDocs(query(collection(db, 'results'), where('userId', '==', uid), orderBy('completedAt', 'desc')))
+      ]);
+      const quizzes = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      myResults = rSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const done = new Set(myResults.map(r => r.quizId));
+      const avg  = myResults.length ? Math.round(myResults.reduce((s,r) => s+(r.percentage||0),0)/myResults.length) : 0;
+      const best = myResults.length ? Math.max(...myResults.map(r=>r.grade)) : 0;
+
+      document.getElementById('s-avail').textContent = quizzes.length;
+      document.getElementById('s-done').textContent  = myResults.length;
+      document.getElementById('s-avg').textContent   = avg + '%';
+      document.getElementById('s-best').textContent  = best > 0 ? best + '/5' : '-';
+
+      // Quizzes grid
+      const grid = document.getElementById('quizzes-grid');
+      if (!quizzes.length) {
+        grid.innerHTML = `<div class="card empty" style="grid-column:1/-1">
+          <div class="empty-icon">⏳</div><h3>Nema dostupnih kvizova</h3>
+          <p>Nastavnik još nije aktivirao nijedan kviz. Provjerite uskoro.</p></div>`;
+      } else {
+        grid.innerHTML = quizzes.map(q => {
+          const mr = myResults.find(r => r.quizId === q.id);
+          const completed = done.has(q.id);
+          return `<div class="card qcard">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="qcard-subj">${q.subject || 'Kviz'}</div>
+              ${completed ? gradeBadge(mr.grade, mr.gradeLabel) : '<span class="badge badge-blue">Dostupan</span>'}
+            </div>
+            <div class="qcard-title">${q.title}</div>
+            <div class="qcard-desc">${q.description || ''}</div>
+            <div class="qcard-meta">
+              <span>❓ ${q.numQuestions} pitanja</span>
+              <span>⏱ ${q.timeLimit||30} min</span>
+              <span>⚡ ${q.difficulty}</span>
+            </div>
+            ${completed && mr ? `<div class="res-bar">
+              <div class="prog-bar"><div class="prog-fill" style="width:${mr.percentage}%"></div></div>
+              <span>${mr.percentage}% — ${mr.gradeLabel}</span></div>` : ''}
+            <button class="btn ${completed?'btn-ghost':'btn-primary'} btn-full" onclick="startQuiz('${q.id}')">
+              ${completed ? '🔄 Ponovi kviz' : '▶ Počni kviz'}
+            </button>
+          </div>`;
+        }).join('');
+      }
+
+      // My results
+      const rWrap = document.getElementById('my-results-wrap');
+      if (!myResults.length) {
+        rWrap.innerHTML = '<p style="color:var(--text3);font-size:14px;padding:16px 0">Još niste riješili nijedan kviz</p>';
+      } else {
+        rWrap.innerHTML = `<table class="tbl">
+          <thead><tr><th>Kviz</th><th>Bodovi</th><th>%</th><th>Ocjena</th><th>Datum</th><th></th></tr></thead>
+          <tbody>${myResults.map(r => `<tr>
+            <td style="color:var(--text);font-weight:500">${r.quizTitle}</td>
+            <td>${r.earnedPoints}/${r.totalPoints}</td>
+            <td style="color:${pctColor(r.percentage)};font-weight:600">${r.percentage}%</td>
+            <td>${gradeBadge(r.grade, r.gradeLabel)}</td>
+            <td>${fmtDate(r.completedAt)}</td>
+            <td><button class="btn btn-ghost btn-sm" onclick="openResult('${r.id}')">Detalji</button></td>
+          </tr>`).join('')}</tbody>
+        </table>`;
+      }
+    }
+
+    window.startQuiz = (id) => {
+      sessionStorage.setItem('quizId', id);
+      window.location.href = '/take-quiz?id=' + id;
+    };
+    window.openResult = (id) => {
+      window.location.href = '/result?id=' + id;
+    };
+  </script>
+</body>
+</html>
